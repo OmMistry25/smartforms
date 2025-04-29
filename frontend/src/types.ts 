@@ -1,0 +1,15 @@
+/** --- copied from backend for FE use --- */
+export interface CatNode {
+  label: string;
+  url  : string;
+  children?: CatNode[];
+}
+export interface FacetValue {
+  label: string;
+  qs   : string;
+}
+export interface FacetGroup {
+  name  : string;
+  multi : boolean;
+  values: FacetValue[];
+}
