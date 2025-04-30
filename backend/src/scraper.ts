@@ -1,32 +1,65 @@
-import { chromium, Browser } from 'playwright';
+import { chromium, Browser, ElementHandle } from 'playwright';
 
-/** ----------  Shared types  ---------- **/
+/* ----------  Shared types ---------- */
 export interface CatNode {
-  label : string;
-  url   : string;
+  label: string;
+  url: string;
   children?: CatNode[];
 }
 
 export interface FacetValue {
-  label : string;
-  qs    : string;              // e.g.  "size=L"  or  "Colour=Black"
-}
-export interface FacetGroup {
-  name   : string;             // e.g.  "Size"
-  multi  : boolean;            // true  = check-boxes ; false = radio buttons
-  values : FacetValue[];
+  label: string;
+  qs: string;                // e.g. "size=L"
 }
 
-/** ----------  Category scraper  ---------- **/
+export interface FacetGroup {
+  name: string;              // e.g. "Size"
+  multi: boolean;            // true = checkbox list ; false = radio list
+  values: FacetValue[];
+}
+
+/* ----------  Category scraper ---------- */
 export async function scrapeCategories(homeUrl: string): Promise<CatNode[]> {
   const browser = await chromium.launch({ headless: true });
   const page    = await browser.newPage({ viewport: { width: 1280, height: 800 } });
 
-  await page.goto(homeUrl, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+  await page.goto(homeUrl, { waitUntil: 'domcontentloaded', timeout: 90_000 });
+  await page.evaluate(() => window.scrollTo(0, 400)); // trigger sticky headers
+  await page.waitForTimeout(500);
 
-  const nav = await page.$('nav') ?? await page.$('header ul');
-  if (!nav) { await browser.close(); throw new Error('Navigation element not found'); }
+  /* -------- locate the best nav element -------- */
+  const candidates = await page.$$(
+    'nav, header nav, nav[role="navigation"], header ul, div[class*=Header] nav'
+  );
 
+  let nav: ElementHandle<Element> | null = null;
+  let bestScore = -1;
+  const siteHost = new URL(homeUrl).host;
+
+  for (const el of candidates) {
+    // ignore ultra-thin bars (likely brand switchers)
+    const box = await el.boundingBox();
+    if (box && box.height < 20) continue;
+
+    const anchors = await el.$$(':scope a');
+    let sameHost = 0;
+    for (const a of anchors) {
+      const href = await a.getAttribute('href');
+      if (!href) continue;
+      if (new URL(href, homeUrl).host === siteHost) sameHost++;
+    }
+    if (sameHost > bestScore) {
+      bestScore = sameHost;
+      nav = el;
+    }
+  }
+
+  if (!nav || bestScore < 3) {
+    await browser.close();
+    throw new Error('Navigation element not found');
+  }
+
+  /* -------- extract hierarchy -------- */
   const mainLinks = await nav.$$(':scope a');
   const tree: CatNode[] = [];
 
@@ -36,10 +69,10 @@ export async function scrapeCategories(homeUrl: string): Promise<CatNode[]> {
 
     const mainHref = await link.getAttribute('href') ?? '/';
     try { await link.hover({ force: true }); } catch {}
-
     await page.waitForTimeout(300);
 
-    const subLinks = await link.$$(':scope + ul a, :scope >> .. ul a');
+    /* second level */
+    const subLinks = await link.$$(':scope ul a');   // any <a> inside descendant <ul>
     const subNodes: CatNode[] = [];
 
     for (const s of subLinks) {
@@ -50,7 +83,8 @@ export async function scrapeCategories(homeUrl: string): Promise<CatNode[]> {
       try { await s.hover({ force: true }); } catch {}
       await page.waitForTimeout(200);
 
-      const leafLinks = await s.$$(':scope + ul a, :scope >> .. ul a');
+      /* third level */
+      const leafLinks = await s.$$(':scope ul a');
       const leafNodes: CatNode[] = [];
       for (const t of leafLinks) {
         const txt = (await t.innerText()).trim();
@@ -77,28 +111,21 @@ export async function scrapeCategories(homeUrl: string): Promise<CatNode[]> {
   return tree;
 }
 
-/** ----------  Facet scraper  ---------- **/
+/* ----------  Facet scraper (unchanged) ---------- */
 async function getBrowser(): Promise<Browser> {
-  // simple singleton to avoid spawning chromium for every request
   if (!(global as any)._smBrowser) {
     (global as any)._smBrowser = await chromium.launch({ headless: true });
   }
   return (global as any)._smBrowser as Browser;
 }
 
-/**
- * Extracts filter facets from a product-listing page.
- * Heuristic: find any  <section|div>  with data-testid or class containing "filter".
- */
 export async function scrapeFacets(plpUrl: string): Promise<FacetGroup[]> {
   const browser = await getBrowser();
   const page    = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 
   await page.goto(plpUrl, { waitUntil: 'networkidle', timeout: 45_000 });
 
-  /* Strategy 1 – DOM search */
   const containers = await page.$$('[data-testid*="filter"], [class*="filter"], aside');
-
   const groups: FacetGroup[] = [];
 
   for (const box of containers) {
@@ -109,7 +136,6 @@ export async function scrapeFacets(plpUrl: string): Promise<FacetGroup[]> {
 
     const inputs = await box.$$(`input[type=checkbox], input[type=radio]`);
     const links  = await box.$$(`a[href*="?"]`);
-
     const values: FacetValue[] = [];
 
     if (inputs.length) {
