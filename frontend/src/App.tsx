@@ -1,61 +1,63 @@
 import React, { useState } from 'react';
-import { CatNode } from './types';
+import type { CatNode } from './types';
 
+/* ------------------------- UI component ------------------------- */
 export default function App() {
-  const [url, setUrl] = useState('');
-  const [tree, setTree] = useState<CatNode[] | null>(null);
-  const [err, setErr]   = useState('');
-  const [loading, setLoading] = useState(false);
+  const [url, setUrl]       = useState('');
+  const [loading, setLoad ] = useState(false);
+  const [error, setError ]  = useState('');
+  const [tree,  setTree  ]  = useState<CatNode[] | null>(null);
 
+  /* --- call backend /api/scrape --- */
   async function generate() {
     if (!url) return;
-    setLoading(true);
-    setErr('');
+    setLoad(true);  setError('');  setTree(null);
     try {
-      const res = await fetch(
-        `/api/scrape?url=${encodeURIComponent(url)}`
-      );
-      const { ok, data, error } = await res.json();
-      if (!ok) throw new Error(error);
-      setTree(data);
-    } catch (e: any) {
-      setErr(e.message);
+      const res = await fetch(`/api/scrape?url=${encodeURIComponent(url)}`);
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error);
+      setTree(data.data);
+    } catch (err:any) {
+      setError(err.message || 'Unknown error');
     }
-    setLoading(false);
+    setLoad(false);
   }
 
   return (
-    <div style={{ padding: 20, fontFamily: 'sans-serif', maxWidth: 640 }}>
+    <div style={{
+      maxWidth: 700, margin: '0 auto', padding: 24, fontFamily: 'sans-serif'
+    }}>
       <h1 style={{ marginBottom: 20 }}>Smart-Form Navigator</h1>
 
-      {/* URL entry */}
-      <label style={{ display: 'block', marginBottom: 10 }}>
-        Home-page URL:&nbsp;
+      <label style={{ display:'block', marginBottom:12 }}>
+        Home-page URL:
         <input
-          style={{ width: '100%' }}
+          style={{ width:'100%', padding:8, marginTop:4 }}
+          placeholder="https://www.gap.com/"
           value={url}
           onChange={e => setUrl(e.target.value)}
-          placeholder="https://www.aeropostale.com/"
         />
       </label>
 
-      <button onClick={generate} disabled={!url || loading}>
+      <button
+        onClick={generate}
+        disabled={!url || loading}
+        style={{
+          padding:'8px 20px', background:'#1e64f0', color:'#fff',
+          border:'none', borderRadius:4, cursor:'pointer'
+        }}
+      >
         {loading ? 'Scraping…' : 'Generate'}
       </button>
 
-      {err && <p style={{ color: 'red', marginTop: 10 }}>{err}</p>}
+      {error && <p style={{ color:'red', marginTop:12 }}>{error}</p>}
 
-      {/* Quick proof it worked */}
       {tree && (
-        <pre
-          style={{
-            background: '#f0f0f0',
-            padding: 10,
-            whiteSpace: 'pre-wrap',
-            marginTop: 20,
-          }}
-        >
-          {JSON.stringify(tree, null, 2)}
+        <pre style={{
+          background:'#f4f4f4', padding:16, marginTop:20,
+          whiteSpace:'pre-wrap', borderRadius:4
+        }}>
+{JSON.stringify(tree, null, 2)}
         </pre>
       )}
     </div>
